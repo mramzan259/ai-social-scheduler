@@ -82,7 +82,7 @@ export default function Home() {
       localStorage.setItem('ai-social-posts', JSON.stringify(updated));
       setSelectedCaption('');
       setScheduledTime('');
-      showToast('✅ Saved to Drive & email sent!');
+      showToast('✅ Saved to Drive folder "AI Social Scheduler" & email sent!');
     } catch {
       showToast('Save failed!', 'error');
     }
@@ -220,7 +220,7 @@ export default function Home() {
                         <span className="text-xs bg-purple-500/40 px-2 py-1 rounded-full">{post.platform}</span>
                         <span className="text-xs bg-blue-500/40 px-2 py-1 rounded-full">📅 {new Date(post.scheduledTime).toLocaleString()}</span>
                         <span className="text-xs bg-green-500/40 px-2 py-1 rounded-full">✉️ {post.email}</span>
-                        {post.driveFileId && <span className="text-xs bg-yellow-500/40 px-2 py-1 rounded-full">📁 Drive Saved</span>}
+                        {post.driveFileId && <span className="text-xs bg-yellow-500/40 px-2 py-1 rounded-full">📁 Drive: AI Social Scheduler</span>}
                       </div>
                       {editingId === post.id ? (
                         <textarea

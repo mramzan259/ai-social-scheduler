@@ -1,8 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
-// Lightweight Google Drive upload using fetch (no googleapis needed)
-async function uploadToDrive(content: string, fileName: string): Promise<string | null> {
+// Helper: Check if folder exists, if not create it
+async function getOrCreateFolder(accessToken: string, folderName = 'AI Social Scheduler'): Promise<string | null> {
+  try {
+    // 1. Search if folder already exists in Google Drive
+    const query = encodeURIComponent(`name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
+    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)&spaces=drive`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (searchRes.ok) {
+      const data = await searchRes.json();
+      if (data.files && data.files.length > 0) {
+        return data.files[0].id;
+      }
+    }
+
+    // 2. If folder does not exist, create it
+    const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+      }),
+    });
+
+    if (createRes.ok) {
+      const folderData = await createRes.json();
+      return folderData.id || null;
+    }
+    return null;
+  } catch (err) {
+    console.error('getOrCreateFolder error:', err);
+    return null;
+  }
+}
+
+// Lightweight Google Drive upload using fetch (saves inside folder)
+async function uploadToDrive(content: string, fileName: string): Promise<{ fileId: string | null; folderId: string | null }> {
   try {
     // Get access token from refresh token
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -16,17 +56,32 @@ async function uploadToDrive(content: string, fileName: string): Promise<string 
       }),
     });
 
-    const { access_token } = await tokenRes.json();
-    if (!access_token) return null;
+    const tokenData = await tokenRes.json();
+    const access_token = tokenData.access_token;
+    if (!access_token) {
+      console.error('No access token received:', tokenData);
+      return { fileId: null, folderId: null };
+    }
 
-    // Multipart upload to Drive
+    // Get or create dedicated folder: 'AI Social Scheduler'
+    const folderId = await getOrCreateFolder(access_token, 'AI Social Scheduler');
+
+    // Multipart upload to Drive inside the folder
     const boundary = 'boundary_ai_scheduler';
-    const metadata = JSON.stringify({ name: fileName, mimeType: 'text/plain' });
+    const metadata: Record<string, unknown> = {
+      name: fileName,
+      mimeType: 'text/plain',
+    };
+    if (folderId) {
+      metadata.parents = [folderId];
+    }
+
+    const metadataStr = JSON.stringify(metadata);
     const body = [
       `--${boundary}`,
       'Content-Type: application/json; charset=UTF-8',
       '',
-      metadata,
+      metadataStr,
       `--${boundary}`,
       'Content-Type: text/plain',
       '',
@@ -46,21 +101,24 @@ async function uploadToDrive(content: string, fileName: string): Promise<string 
       }
     );
 
-    const { id } = await uploadRes.json();
-    return id || null;
+    const uploadData = await uploadRes.json();
+    return {
+      fileId: uploadData.id || null,
+      folderId: folderId || null,
+    };
   } catch (err) {
     console.error('Drive upload error:', err);
-    return null;
+    return { fileId: null, folderId: null };
   }
 }
 
 export async function POST(req: NextRequest) {
   const { caption, scheduledTime, platform, email } = await req.json();
 
-  // Save to Google Drive
-  const content = `AI Social Scheduler - Draft Post\n${'='.repeat(40)}\nPlatform: ${platform}\nScheduled: ${new Date(scheduledTime).toLocaleString()}\nCreated: ${new Date().toLocaleString()}\n\nCaption:\n${caption}`;
+  // Save to Google Drive inside 'AI Social Scheduler' folder
+  const content = `AI Social Scheduler - Draft Post\n${'='.repeat(40)}\nPlatform: ${platform}\nScheduled: ${new Date(scheduledTime).toLocaleString()}\nCreated: ${new Date().toLocaleString()}\nFolder: AI Social Scheduler\n\nCaption:\n${caption}`;
 
-  const fileId = await uploadToDrive(content, `post-${platform}-${Date.now()}.txt`);
+  const { fileId, folderId } = await uploadToDrive(content, `post-${platform}-${Date.now()}.txt`);
 
   // Send email notification
   let emailSent = false;
@@ -95,7 +153,7 @@ export async function POST(req: NextRequest) {
           </div>
 
           ${fileId
-            ? `<p style="color:#6ee7b7;margin:0 0 8px;">✅ Saved to Google Drive</p>`
+            ? `<p style="color:#6ee7b7;margin:0 0 8px;">📁 Saved to Google Drive in folder: <strong>AI Social Scheduler</strong></p>`
             : `<p style="color:#fbbf24;margin:0 0 8px;">⚠️ Drive save skipped (check credentials)</p>`
           }
 
@@ -109,5 +167,5 @@ export async function POST(req: NextRequest) {
     console.error('Email error:', err);
   }
 
-  return NextResponse.json({ success: true, fileId, emailSent });
+  return NextResponse.json({ success: true, fileId, folderId, emailSent });
 }
